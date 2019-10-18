@@ -9,15 +9,35 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var g = game.Game{}
+var users = []user{}
+
 type user struct {
-	Conn   *websocket.Conn
-	Player *game.Player
+	conn   *websocket.Conn
+	player *game.Player
+}
+
+func (u *user) handleIncomingMessages() {
+	for {
+		messageType, p, err := u.conn.ReadMessage()
+		if err != nil {
+			panic(err)
+		}
+		message := string(p)
+		log.Printf("incoming message: %s\n", message)
+		if message == "start" {
+			g.StartNewRound("cat", users[0].player)
+		} else {
+			if _, err = u.player.Guess(string(p)); err != nil {
+				if err = u.conn.WriteMessage(messageType, []byte(err.Error())); err != nil {
+					fmt.Println(err)
+				}
+			}
+		}
+	}
 }
 
 func main() {
-	g := game.Game{}
-	users := []user{}
-
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		var upgrader = websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -33,35 +53,9 @@ func main() {
 			return
 		}
 
-		player := g.Join()
-		u := user{conn, player}
+		u := user{conn, g.Join()}
 		users = append(users, u)
-
-		if len(users) >= 2 {
-			g.StartNewRound("cat", users[0].Player)
-		}
-
-		go func() {
-			for {
-				messageType, p, err := conn.ReadMessage()
-				if err != nil {
-					log.Println(err)
-					return
-				}
-				fmt.Println(string(p))
-				if _, err = player.Guess(string(p)); err != nil {
-					if err = conn.WriteMessage(messageType, []byte(err.Error())); err != nil {
-						fmt.Println(err)
-					}
-				}
-				fmt.Println(err)
-			}
-		}()
-
-		conn.SetCloseHandler(func(code int, text string) error {
-			fmt.Println("connection closed")
-			return nil
-		})
+		go u.handleIncomingMessages()
 	})
 
 	fmt.Println("Listening on port 8080")
